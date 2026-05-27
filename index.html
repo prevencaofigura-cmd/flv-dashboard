@@ -1,0 +1,1565 @@
+# =========================================================
+# DASHBOARD FUTURISTA - COMPLETO + TOP 5 + PIZZAS MENSAIS
+# =========================================================
+
+import os
+import re
+import glob
+from datetime import datetime
+
+import pandas as pd
+import plotly.graph_objects as go
+
+from plotly.subplots import make_subplots
+
+# =========================================================
+# CONFIGURAÇÕES
+# =========================================================
+
+PASTA_DADOS = r"C:\Users\Super Figura\Desktop\PYTHON\Dados\Loja 1"
+PASTA_SAIDA = "dashboard"
+ARQUIVO_FINAL = "FLV Loja 1.html"
+
+os.makedirs(PASTA_SAIDA, exist_ok=True)
+
+# =========================================================
+# DATA
+# =========================================================
+
+DATA_ATUALIZACAO = datetime.now().strftime(
+    "%d/%m/%Y %H:%M:%S"
+)
+
+# =========================================================
+# MESES
+# =========================================================
+
+MESES = {
+
+    1: "JAN",
+    2: "FEV",
+    3: "MAR",
+    4: "ABR",
+    5: "MAI",
+    6: "JUN",
+    7: "JUL",
+    8: "AGO",
+    9: "SET",
+    10: "OUT",
+    11: "NOV",
+    12: "DEZ"
+
+}
+
+# =========================================================
+# IDENTIFICAR PERÍODO
+# =========================================================
+
+def identificar_periodo(nome_arquivo):
+
+    nome = os.path.basename(nome_arquivo)
+
+    padrao = r"(\d+)a(\d+)-(\d+)"
+
+    resultado = re.search(
+        padrao,
+        nome
+    )
+
+    if resultado:
+
+        inicio = int(resultado.group(1))
+        fim = int(resultado.group(2))
+        mes = int(resultado.group(3))
+
+        periodo = f"{inicio}a{fim}"
+
+        nome_mes = MESES.get(
+            mes,
+            str(mes)
+        )
+
+        referencia = f"{nome_mes}<br>{periodo}"
+
+        ordem = (
+            mes * 100
+            + inicio
+        )
+
+        return (
+            nome_mes,
+            periodo,
+            referencia,
+            ordem
+        )
+
+    return None, None, None, None
+
+# =========================================================
+# LEITURA CSV
+# =========================================================
+
+def ler_csv(arquivo):
+
+    separadores = [
+        ";",
+        ",",
+        "|",
+        "\t"
+    ]
+
+    for sep in separadores:
+
+        try:
+
+            return pd.read_csv(
+                arquivo,
+                sep=sep,
+                encoding="utf-8"
+            )
+
+        except:
+            pass
+
+    try:
+
+        return pd.read_csv(
+            arquivo,
+            sep=None,
+            engine="python",
+            encoding="utf-8"
+        )
+
+    except:
+
+        return pd.read_csv(
+            arquivo,
+            sep=None,
+            engine="python",
+            encoding="latin1"
+        )
+
+# =========================================================
+# CONVERTER NÚMERO
+# =========================================================
+
+def converter_numero(valor):
+
+    if pd.isna(valor):
+        return None
+
+    valor = str(valor).strip()
+
+    if valor == "":
+        return None
+
+    valor = valor.replace("R$", "")
+    valor = valor.replace("%", "")
+    valor = valor.replace(" ", "")
+
+    if "," in valor and "." in valor:
+
+        if valor.rfind(",") > valor.rfind("."):
+
+            valor = valor.replace(".", "")
+            valor = valor.replace(",", ".")
+
+        else:
+
+            valor = valor.replace(",", "")
+
+    elif "," in valor:
+
+        valor = valor.replace(".", "")
+        valor = valor.replace(",", ".")
+
+    try:
+
+        return float(valor)
+
+    except:
+
+        return None
+
+# =========================================================
+# FORMATAR NÚMERO
+# =========================================================
+
+def formatar_numero(valor):
+
+    texto = f"{valor:,.2f}"
+
+    texto = texto.replace(",", "X")
+    texto = texto.replace(".", ",")
+    texto = texto.replace("X", ".")
+
+    return texto
+
+# =========================================================
+# PROCESSAR CSV
+# =========================================================
+
+def processar_csv(arquivo_csv):
+
+    print(f"\nProcessando: {arquivo_csv}")
+
+    (
+        mes,
+        periodo,
+        referencia,
+        ordem
+
+    ) = identificar_periodo(
+        arquivo_csv
+    )
+
+    if referencia is None:
+        return None, None
+
+    df_original = ler_csv(arquivo_csv)
+
+    df = df_original.copy()
+
+    df["MES"] = mes
+    df["PERIODO"] = periodo
+    df["REFERENCIA"] = referencia
+    df["ORDEM"] = ordem
+
+    ignorar = [
+        "MES",
+        "PERIODO",
+        "REFERENCIA",
+        "ORDEM"
+    ]
+
+    colunas_numericas = []
+
+    for col in df.columns:
+
+        if col in ignorar:
+            continue
+
+        try:
+
+            if col != "Nm.Produto":
+
+                df[col] = df[col].apply(
+                    converter_numero
+                )
+
+                if df[col].notna().sum() > 0:
+                    colunas_numericas.append(col)
+
+        except:
+            pass
+
+    agrupado = (
+
+        df.groupby(
+            [
+                "MES",
+                "PERIODO",
+                "REFERENCIA",
+                "ORDEM"
+            ]
+        )[colunas_numericas]
+
+        .sum()
+
+        .reset_index()
+
+    )
+
+    return agrupado, df_original
+
+# =========================================================
+# GERAR TOP 5
+# =========================================================
+
+def gerar_top5(
+
+    dashboard,
+    df,
+    coluna,
+    cor,
+    row,
+    col,
+    moeda=False
+
+):
+
+    if coluna is None:
+        return
+
+    if coluna not in df.columns:
+        return
+
+    top5 = (
+
+        df.groupby("Nm.Produto")[coluna]
+
+        .sum()
+
+        .sort_values(ascending=False)
+
+        .head(5)
+
+        .sort_values()
+
+    )
+
+    if top5.empty:
+        return
+
+    nomes_produtos = []
+    valores_formatados = []
+
+    for produto in top5.index:
+
+        nome = str(produto)
+
+        if len(nome) > 28:
+            nome = nome[:28] + "..."
+
+        if not moeda:
+            nome = f"{nome} KG"
+
+        nomes_produtos.append(nome)
+
+    for valor in top5.values:
+
+        if moeda:
+
+            valores_formatados.append(
+                f"<b>R$ {formatar_numero(valor)}</b>"
+            )
+
+        else:
+
+            valores_formatados.append(
+                f"<b>{formatar_numero(valor)} KG</b>"
+            )
+
+    posicoes = [0, 1, 2, 3, 4]
+
+    dashboard.add_trace(
+
+        go.Bar(
+
+            x=top5.values,
+
+            y=posicoes,
+
+            orientation="h",
+
+            text=nomes_produtos,
+
+            textposition="inside",
+
+            insidetextanchor="start",
+
+            textfont=dict(
+                size=30,
+                color="white"
+            ),
+
+            marker=dict(
+                color=cor
+            ),
+
+            cliponaxis=False,
+
+            hovertemplate="%{text}<br>%{x:.2f}<extra></extra>",
+
+            showlegend=False
+
+        ),
+
+        row=row,
+        col=col
+
+    )
+
+    dashboard.add_trace(
+
+        go.Scatter(
+
+            x=top5.values,
+
+            y=posicoes,
+
+            mode="text",
+
+            text=valores_formatados,
+
+            textposition="middle right",
+
+            textfont=dict(
+                size=18,
+                color="white"
+            ),
+
+            showlegend=False,
+
+            hoverinfo="skip"
+
+        ),
+
+        row=row,
+        col=col
+
+    )
+
+    maior_valor = top5.max()
+
+    dashboard.update_xaxes(
+
+        range=[
+            0,
+            maior_valor * 1.35
+        ],
+
+        row=row,
+        col=col
+
+    )
+
+    dashboard.update_yaxes(
+
+        showticklabels=False,
+        showgrid=True,
+        zeroline=False,
+
+        row=row,
+        col=col
+
+    )
+
+# =========================================================
+# MAIN
+# =========================================================
+
+def main():
+
+    arquivos = glob.glob(
+        os.path.join(
+            PASTA_DADOS,
+            "*.csv"
+        )
+    )
+
+    if not arquivos:
+
+        print("Nenhum CSV encontrado.")
+        return
+
+    lista_dfs = []
+    lista_originais = []
+
+    for arquivo in arquivos:
+
+        resultado, original = processar_csv(
+            arquivo
+        )
+
+        if resultado is not None:
+            lista_dfs.append(resultado)
+
+        if original is not None:
+            lista_originais.append(original)
+
+    if not lista_dfs:
+
+        print("Nenhum dado válido.")
+        return
+
+    # =====================================================
+    # UNIR
+    # =====================================================
+
+    df_final = pd.concat(
+        lista_dfs,
+        ignore_index=True
+    )
+
+    df_produtos = pd.concat(
+        lista_originais,
+        ignore_index=True
+    )
+
+    for col in df_produtos.columns:
+
+        if col != "Nm.Produto":
+
+            try:
+
+                df_produtos[col] = df_produtos[col].apply(
+                    converter_numero
+                )
+
+            except:
+                pass
+
+    colunas_agrupamento = [
+
+        col for col in df_final.columns
+
+        if col not in [
+            "MES",
+            "PERIODO",
+            "REFERENCIA",
+            "ORDEM"
+        ]
+
+    ]
+
+    df_final = (
+
+        df_final
+
+        .groupby(
+            [
+                "MES",
+                "PERIODO",
+                "REFERENCIA",
+                "ORDEM"
+            ]
+        )[colunas_agrupamento]
+
+        .sum()
+
+        .reset_index()
+
+    )
+
+    df_final = df_final.sort_values(
+        by="ORDEM"
+    ).reset_index(drop=True)
+
+    
+
+    # =====================================================
+    # IDENTIFICAR COLUNAS
+    # =====================================================
+
+    col_venda = None
+    col_quebra = None
+    col_desvio = None
+
+    col_quebra_kg = None
+    col_quebra_rs = None
+
+    col_desvio_kg = None
+    col_desvio_rs = None
+
+    for col in df_produtos.columns:
+
+        nome = str(col).lower()
+
+        if (
+            "vl.venda" in nome
+            or "vl venda" in nome
+            or "venda" in nome
+        ):
+
+            if col_venda is None:
+                col_venda = col
+
+        if "quebra" in nome:
+
+            if col_quebra is None:
+                col_quebra = col
+
+            if (
+                "kg" in nome
+                or "qt" in nome
+                or "quant" in nome
+            ):
+
+                col_quebra_kg = col
+
+            if (
+                "r$" in nome
+                or "valor" in nome
+                or "vl" in nome
+            ):
+
+                col_quebra_rs = col
+
+        if "desvio" in nome:
+
+            if col_desvio is None:
+                col_desvio = col
+
+            if (
+                "kg" in nome
+                or "qt" in nome
+                or "quant" in nome
+            ):
+
+                col_desvio_kg = col
+
+            if (
+                "r$" in nome
+                or "valor" in nome
+                or "vl" in nome
+            ):
+
+                col_desvio_rs = col
+
+    # =====================================================
+    # CÁLCULOS
+    # =====================================================
+
+    df_final["Perda Total"] = 0
+
+    if col_quebra is not None:
+        df_final["Perda Total"] += df_final[col_quebra]
+
+    if col_desvio is not None:
+        df_final["Perda Total"] += df_final[col_desvio]
+
+    df_final["Vl.Venda Total"] = (
+        df_final[col_venda]
+        + df_final["Perda Total"]
+    )
+
+    df_final["% Perda Total"] = (
+        (
+            df_final["Perda Total"]
+            / df_final["Vl.Venda Total"]
+        ) * 100
+    )
+
+    df_final["% Acurácia"] = (
+        100
+        - df_final["% Perda Total"]
+    )
+
+    if col_quebra is not None:
+
+        df_final["% Quebra"] = (
+            (
+                df_final[col_quebra]
+                / df_final["Vl.Venda Total"]
+            ) * 100
+        )
+
+    else:
+
+        df_final["% Quebra"] = 0
+
+    if col_desvio is not None:
+
+        df_final["% Desvio"] = (
+            (
+                df_final[col_desvio]
+                / df_final["Vl.Venda Total"]
+            ) * 100
+        )
+
+    else:
+
+        df_final["% Desvio"] = 0
+
+    # =====================================================
+    # RESUMO MENSAL
+    # =====================================================
+
+    df_mensal = (
+
+        df_final
+
+        .groupby("MES")
+
+        .agg({
+
+            "Perda Total": "sum",
+            "Vl.Venda Total": "sum"
+
+        })
+
+    )
+
+    df_mensal["% Perda Mensal"] = (
+
+        df_mensal["Perda Total"]
+        / df_mensal["Vl.Venda Total"]
+
+    ) * 100
+
+    
+
+    # =====================================================
+    # DASHBOARD
+    # =====================================================
+
+    dashboard = make_subplots(
+
+        rows=9,
+        cols=2,
+
+        specs=[
+
+            [{"type": "xy"}, {"type": "xy"}],
+            [{"type": "xy"}, {"type": "xy"}],
+
+            [{"type": "xy", "colspan": 2}, None],
+            [{"type": "xy", "colspan": 2}, None],
+            [{"type": "xy", "colspan": 2}, None],
+            [{"type": "xy", "colspan": 2}, None],
+
+            [{"type": "xy", "colspan": 2}, None],
+
+            [{"type": "xy", "colspan": 2}, None],
+
+            [{"type": "domain", "colspan": 2}, None]
+
+        ],
+
+        vertical_spacing=0.025,
+        horizontal_spacing=0.08,
+
+        subplot_titles=[
+
+            "TOP 5 QUEBRAS DA SEMANA KG",
+            "TOP 5 QUEBRAS DA SEMANA R$",
+
+            "TOP 5 DESVIOS DA SEMANA KG",
+            "TOP 5 DESVIOS DA SEMANA R$",
+
+            "Vl.Venda Total",
+            "% Acurácia",
+            "% Perda Total Periodo",
+            "% Perda Mensal",
+            "% Quebra x % Desvio Mensal"
+
+        ]
+
+    )
+
+    # =====================================================
+    # TÍTULOS
+    # =====================================================
+
+    for anotacao in dashboard['layout']['annotations']:
+
+        anotacao['font'] = dict(
+            size=35,
+            color="#F7FDFD"
+        )
+
+    # =====================================================
+    # TOP 5
+    # =====================================================
+
+    ultimo_arquivo = max(
+        arquivos,
+        key=os.path.getmtime
+    )
+
+    print(f"\nÚltimo CSV utilizado TOP 5:")
+    print(ultimo_arquivo)
+
+    df_top5 = ler_csv(ultimo_arquivo)
+
+    for col in df_top5.columns:
+
+        if col != "Nm.Produto":
+
+            try:
+
+                df_top5[col] = df_top5[col].apply(
+                    converter_numero
+                )
+
+            except:
+                pass
+
+    gerar_top5(
+        dashboard,
+        df_top5,
+        col_quebra_kg,
+        "#006D77",
+        1,
+        1,
+        False
+    )
+
+    gerar_top5(
+        dashboard,
+        df_top5,
+        col_quebra_rs,
+        "#008B8B",
+        1,
+        2,
+        True
+    )
+
+    gerar_top5(
+        dashboard,
+        df_top5,
+        col_desvio_kg,
+        "#C97A00",
+        2,
+        1,
+        False
+    )
+
+    gerar_top5(
+        dashboard,
+        df_top5,
+        col_desvio_rs,
+        "#D17A00",
+        2,
+        2,
+        True
+    )
+
+    # =====================================================
+    # GRÁFICOS PRINCIPAIS
+    # =====================================================
+
+        # =====================================================
+    # VL.VENDA TOTAL + PERDA TOTAL
+    # =====================================================
+
+    dashboard.add_trace(
+
+        go.Scatter(
+
+            x=df_final["REFERENCIA"],
+
+            y=df_final["Vl.Venda Total"],
+
+            mode="lines+markers+text",
+
+            text=[
+
+                (
+                    f"R$ {formatar_numero(venda)}"
+                    f"<br>"
+                    f"Perda: R$ {formatar_numero(perda)}"
+                )
+
+                for venda, perda in zip(
+                    df_final["Vl.Venda Total"],
+                    df_final["Perda Total"]
+                )
+
+            ],
+
+            customdata=[
+
+                df_mensal.loc[mes, "Perda Total"]
+
+                for mes in df_final["MES"]
+
+            ],
+
+            textposition="top center",
+
+            textfont=dict(
+                size=18,
+                color="white"
+            ),
+
+            line=dict(
+                width=5,
+                color="#00F5FF"
+            ),
+
+            marker=dict(
+                size=12
+            ),
+
+            hovertemplate=
+                "<b>%{x}</b><br><br>"
+                "Venda Total: %{text}<br>"
+                "Perda Total do Mês: R$ %{customdata:,.2f}"
+                "<extra></extra>",
+
+            name="Vl.Venda Total"
+
+        ),
+
+        row=3,
+        col=1
+
+    )
+
+    # =====================================================
+    # LINHA PERDA TOTAL R$
+    # =====================================================
+
+    dashboard.add_trace(
+
+        go.Scatter(
+
+            x=df_final["REFERENCIA"],
+
+            y=df_final["Perda Total"],
+
+            mode="lines+markers+text",
+
+            text=[
+
+                f"R$ {formatar_numero(v)}"
+
+                for v in df_final["Perda Total"]
+
+            ],
+
+            textposition="bottom center",
+
+            textfont=dict(
+                size=16,
+                color="#FF4500"
+            ),
+
+            line=dict(
+                width=4,
+                color="#FF4500",
+                dash="dot"
+            ),
+
+            marker=dict(
+                size=10
+            ),
+
+            hovertemplate=
+                "<b>%{x}</b><br><br>"
+                "Perda Total: R$ %{y:,.2f}"
+                "<extra></extra>",
+
+            name="Perda Total R$"
+
+        ),
+
+        row=3,
+        col=1
+
+    )
+
+    dashboard.add_trace(
+
+        go.Scatter(
+
+            x=df_final["REFERENCIA"],
+            y=df_final["% Acurácia"],
+
+            mode="lines+markers+text",
+
+            text=[
+                f"{formatar_numero(v)}%"
+                for v in df_final["% Acurácia"]
+            ],
+
+            textposition="top center",
+
+            line=dict(
+                width=4,
+                color="#00FF85"
+            ),
+
+            marker=dict(
+                size=10
+            ),
+
+            name="% Acurácia"
+
+        ),
+
+        row=4,
+        col=1
+
+    )
+
+    # =========================================================
+    # % PERDA TOTAL POR PERÍODO
+    # =========================================================
+
+    # CÁLCULO REAL POR PERÍODO
+    df_final["% Perda Periodo"] = (
+
+        df_final["Perda Total"]
+        / df_final["Vl.Venda Total"]
+
+    ) * 100
+
+    # =========================================================
+    # GRÁFICO % PERDA TOTAL
+    # =========================================================
+
+    dashboard.add_trace(
+
+        go.Scatter(
+
+            x=df_final["REFERENCIA"],
+
+            y=df_final["% Perda Periodo"],
+
+            mode="lines+markers+text",
+
+            text=[
+
+                f"{formatar_numero(valor)}%"
+
+                for valor in df_final["% Perda Periodo"]
+
+            ],
+
+            customdata=df_final["Perda Total"],
+
+            textposition="top center",
+
+            textfont=dict(
+                size=16,
+                color="#FFD700"
+            ),
+
+            line=dict(
+                width=4,
+                color="#FFD700"
+            ),
+
+            marker=dict(
+                size=10
+            ),
+
+            hovertemplate=
+                "<b>%{x}</b><br><br>"
+                "Perda Período: %{y:.2f}%<br>"
+                "Perda Total: R$ %{customdata:,.2f}"
+                "<extra></extra>",
+
+            name="% Perda Total"
+
+        ),
+
+        row=5,
+        col=1
+
+    )
+
+    # =====================================================
+    # RESUMO MENSAL QUEBRA X DESVIO
+    # =====================================================
+
+    df_barras_mensal = (
+
+        df_final
+
+        .groupby("MES")
+
+        .agg({
+
+            "Perda Total": "sum",
+            "Vl.Venda Total": "sum"
+
+        })
+
+        .reset_index()
+
+    )
+
+    df_barras_mensal["% Perda Mensal"] = (
+
+        df_barras_mensal["Perda Total"]
+        / df_barras_mensal["Vl.Venda Total"]
+
+    ) * 100
+
+    # =====================================================
+    # % MENSAIS REAIS
+    # =====================================================
+
+    df_barras_mensal = (
+
+        df_final
+
+        .groupby("MES")
+
+        .agg({
+
+            "Perda Total": "sum",
+            "Vl.Venda Total": "sum",
+            col_quebra: "sum" if col_quebra else "sum",
+            col_desvio: "sum" if col_desvio else "sum"
+
+        })
+
+        .reset_index()
+
+    )
+
+    # % REAL MENSAL
+    df_barras_mensal["% Perda Mensal"] = (
+
+        df_barras_mensal["Perda Total"]
+        / df_barras_mensal["Vl.Venda Total"]
+
+    ) * 100
+
+    # % QUEBRA MENSAL
+    if col_quebra:
+
+        df_barras_mensal["% Quebra Mensal"] = (
+
+            df_barras_mensal[col_quebra]
+            / df_barras_mensal["Vl.Venda Total"]
+
+        ) * 100
+
+    else:
+
+        df_barras_mensal["% Quebra Mensal"] = 0
+
+    # % DESVIO MENSAL
+    if col_desvio:
+
+        df_barras_mensal["% Desvio Mensal"] = (
+
+            df_barras_mensal[col_desvio]
+            / df_barras_mensal["Vl.Venda Total"]
+
+        ) * 100
+
+    else:
+
+        df_barras_mensal["% Desvio Mensal"] = 0
+
+        # =====================================================
+    # ORDENAR MESES CORRETAMENTE
+    # =====================================================
+
+    ordem_meses = {
+
+        "JAN": 1,
+        "FEV": 2,
+        "MAR": 3,
+        "ABR": 4,
+        "MAI": 5,
+        "JUN": 6,
+        "JUL": 7,
+        "AGO": 8,
+        "SET": 9,
+        "OUT": 10,
+        "NOV": 11,
+        "DEZ": 12
+
+    }
+
+    df_barras_mensal["ORDEM_MES"] = (
+
+        df_barras_mensal["MES"]
+
+        .map(ordem_meses)
+
+    )
+
+    df_barras_mensal = df_barras_mensal.sort_values(
+        "ORDEM_MES"
+    )
+
+    # REFERÊNCIA DOS MESES
+
+    df_barras_mensal["MES_REF"] = (
+        df_barras_mensal["MES"]
+    )
+
+# =====================================================
+# GRÁFICO DE BARRAS
+# =====================================================
+
+    dashboard.add_trace(
+
+        go.Bar(
+
+            x=df_barras_mensal["MES_REF"],
+
+            y=df_barras_mensal["% Perda Mensal"],
+
+            text=[
+
+                f"{v:.1f}%"
+
+                for v in df_barras_mensal["% Perda Mensal"]
+
+            ],
+
+            textposition="outside",
+
+            textfont=dict(
+                size=20,
+                color="white"
+            ),
+
+            marker=dict(
+                color="#0914E1"
+            ),
+
+            hovertemplate=
+                "<b>%{x}</b><br>"
+                "Perda Mensal: %{y:.2f}%"
+                "<extra></extra>",
+
+            name="% Perda Mensal"
+
+        ),
+
+        row=6,
+        col=1
+
+    )
+
+    # =====================================================
+    # LINHA META 0,3%
+    # =====================================================
+
+    dashboard.add_hline(
+
+        y=0.3,
+
+        line_width=4,
+
+        line_dash="dash",
+
+        line_color="#FF0000",
+
+        annotation_text="META 0,3%",
+
+        annotation_position="top right",
+
+        annotation_font=dict(
+            size=18,
+            color="#FF0000"
+        ),
+
+        row=6,
+        col=1
+
+    )
+
+    # =====================================================
+    # PIZZAS MENSAIS
+    # =====================================================
+
+    meses_ordenados = (
+
+        df_final[
+            ["MES", "ORDEM"]
+        ]
+
+        .drop_duplicates()
+
+        .sort_values("ORDEM")
+
+    )
+
+    meses_unicos = []
+
+    meses_vistos = set()
+
+    for _, linha in meses_ordenados.iterrows():
+
+        mes = linha["MES"]
+
+        if mes not in meses_vistos:
+
+            meses_vistos.add(mes)
+            meses_unicos.append(mes)
+
+    meses_unicos = meses_unicos[-4:]
+    
+    quantidade_pizzas = len(meses_unicos)
+
+    largura = 1 / quantidade_pizzas
+
+    for i, mes in enumerate(meses_unicos):
+
+        df_mes = df_final[
+            df_final["MES"] == mes
+        ]
+
+        quebra_valor = 0
+        desvio_valor = 0
+        venda_total = 0
+
+        if col_quebra:
+            quebra_valor = df_mes[col_quebra].sum()
+
+        if col_desvio:
+            desvio_valor = df_mes[col_desvio].sum()
+
+        venda_total = df_mes["Vl.Venda Total"].sum()
+
+        # =====================================================
+        # CÁLCULO PARTICIPAÇÃO REAL
+        # =====================================================
+
+        perda_total_mes = quebra_valor + desvio_valor
+
+        if perda_total_mes > 0:
+
+            quebra_total = (
+                quebra_valor / perda_total_mes
+            ) * 100
+
+            desvio_total = (
+                desvio_valor / perda_total_mes
+            ) * 100
+
+        else:
+
+            quebra_total = 0
+            desvio_total = 0
+
+        dashboard.add_trace(
+
+            go.Pie(
+
+                labels=[
+                    "Quebra",
+                    "Desvio"
+                ],
+
+                values=[
+                    quebra_total,
+                    desvio_total
+                ],
+
+                text=[
+
+                    (
+                        f"{quebra_total:.1f}"
+                        .replace(".", ",")
+                        .replace(",0", "")
+                        + "%"
+                    ),
+
+                    (
+                        f"{desvio_total:.1f}"
+                        .replace(".", ",")
+                        .replace(",0", "")
+                        + "%"
+                    )
+
+                ],
+
+                textinfo="label+text",
+
+                hole=0.45,
+
+                textposition="inside",
+
+                insidetextorientation="radial",
+
+                textfont=dict(
+                    size=18,
+                    color="white"
+                ),
+
+                marker=dict(
+
+                    colors=[
+                        "#FF4500",
+                        "#8A2BE2"
+                    ]
+
+                ),
+
+                title=dict(
+
+                    text=mes,
+
+                    position="top center",
+
+                    font=dict(
+                        size=22,
+                        color="white"
+                    )
+
+                ),
+
+                showlegend=False,
+
+                hoverinfo="label+percent",
+
+                name=""
+
+            ),
+
+            row=9,
+            col=1
+
+        )
+
+    # =====================================================
+    # POSICIONAR PIZZAS
+    # =====================================================
+
+    pizzas = [
+
+        trace for trace in dashboard.data
+
+        if trace.type == "pie"
+
+    ]
+
+    for i, trace in enumerate(pizzas):
+
+        inicio = i * largura
+        fim = inicio + largura
+
+        trace.domain = dict(
+
+            x=[
+                inicio + 0.01,
+                fim - 0.01
+            ],
+
+            y=[
+                0.08,
+                0.46
+            ]
+
+        )
+
+    # =====================================================
+    # LAYOUT
+    # =====================================================
+
+    dashboard.update_layout(
+
+        margin=dict(
+            t=250,
+            b=40
+        ),
+
+        barmode="stack",
+
+        template="plotly_dark",
+
+        paper_bgcolor="#050816",
+
+        plot_bgcolor="#050816",
+
+        font=dict(
+            family="Arial",
+            size=14,
+            color="white"
+        ),
+
+        title=dict(
+
+            text=(
+                f"FLV Loja 1"
+                f" &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; "
+                f"<span style='font-size:35px;'>"
+                f"Última atualização: {DATA_ATUALIZACAO}"
+                f"</span>"
+            ),
+
+            x=0.5,
+            y=0.985,
+
+            font=dict(
+                size=115,
+                color="#079534"
+            )
+
+        ),
+
+        hovermode="x unified",
+
+        height=4300,
+
+        showlegend=True,
+
+        legend=dict(
+
+            orientation="h",
+
+            yanchor="top",
+            y=1.02,
+
+            xanchor="right",
+            x=1,
+
+            font=dict(
+                size=18,
+                color="white"
+            ),
+
+            bgcolor="rgba(0,0,0,0)",
+
+            bordercolor="#00F5FF",
+
+            borderwidth=1
+
+        )
+
+    )
+    # =====================================================
+    # EIXOS
+    # =====================================================
+
+    for linha in range(1, 9):
+
+        for coluna in [1, 2]:
+
+            try:
+
+                dashboard.update_xaxes(
+
+                    showgrid=False,
+
+                    row=linha,
+                    col=coluna
+
+                )
+
+                dashboard.update_yaxes(
+
+                    showgrid=True,
+                    gridcolor="rgba(255,255,255,0.08)",
+
+                    row=linha,
+                    col=coluna
+
+                )
+
+            except:
+                pass
+
+    # =====================================================
+    # SALVAR
+    # =====================================================
+
+    caminho_dashboard = os.path.join(
+        PASTA_SAIDA,
+        ARQUIVO_FINAL
+    )
+
+    dashboard.write_html(
+        caminho_dashboard,
+        include_plotlyjs="cdn"
+    )
+
+    print("\n================================================")
+    print("DASHBOARD GERADO COM SUCESSO")
+    print("================================================")
+
+    print(f"\nÚltima atualização: {DATA_ATUALIZACAO}")
+
+    print(f"\nArquivo gerado:")
+    print(caminho_dashboard)
+
+# =========================================================
+# EXECUÇÃO
+# =========================================================
+
+if __name__ == "__main__":
+
+    main()
