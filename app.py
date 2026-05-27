@@ -1,17 +1,32 @@
-from flask import Flask, send_file
+from flask import Flask, send_from_directory
 import os
 
 app = Flask(__name__)
 
+# ==========================================
+# DASHBOARD 1
+# ==========================================
 @app.route("/")
-def dashboard():
+def loja1():
+    return send_from_directory("dashboard", "FLV Loja 1.html")
 
-    caminho = os.path.join(
-        "dashboard",
-        "FLV Loja 1.html"
-    )
+# ==========================================
+# DASHBOARD 2
+# ==========================================
+@app.route("/loja2")
+def loja2():
+    return send_from_directory("dashboard", "FLV Loja 2.html")
 
-    return send_file(caminho)
+# ==========================================
+# DASHBOARD 3
+# ==========================================
+@app.route("/loja3")
+def loja3():
+    return send_from_directory("dashboard", "FLV Loja 3.html")
 
+# ==========================================
+# SERVIDOR
+# ==========================================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
